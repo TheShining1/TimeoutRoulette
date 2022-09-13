@@ -1,0 +1,504 @@
+using System;
+using System.Collections;
+using System.Collections.Specialized;
+using System.Timers;
+
+public class CPHInline
+{
+	static string Prefix = "roulette_";
+	static string LogPrexif = "Roulette :: ";
+
+	static int MaxNumberOfPlayers;
+	static int NumberOfChambers;
+	static int Round;
+
+	[Flags]
+	enum GameStates : byte
+	{
+		None = 0,
+		Started = 1,
+		Singleplayer = 2,
+		Multiplayer = 4,
+		Duel = 8,
+		Normal = 16,	
+		Knockout = 32,
+		InProgress = 64
+	}
+
+	static GameStates GameState;
+	static OrderedDictionary Players;
+	static int PlayerIndex;
+
+	static Timer TimeoutTimer = new Timer();
+
+	static int StartTimeout = 30;
+	static int TypeTimeout = 30;
+	static int JoinTimeout = 60;
+
+	static string StartMessage = "@{0}, so you decided to test your luck? Do you want to play alone? You've got {1} seconds to answer. (!yes/!no/!duel)";
+	static string GameTypeMessage = "@{0} do you want to play normal game or until someone catches the \"bullet\"?  You've got {1} seconds to answer. (!normal/!knockout)";
+	static string GameIsRunningMessage = "@{0} sorry, there is already game in progress and we only got one gun. So wait for it to end.";
+	static string GameIsFullMessage = "@{0} sorry, there is already maximum amount of players.";
+	static string StartTimeoutMessage = "@{0}, did you fell asleep? You will have to start again.";
+	static string TypeTimeoutMessage = "@{0} you are thinking too slow.";
+	static string JoinTimeoutMessage = "@{0}, no one wants to play with you. You will have to start again.";
+
+	static string TimeoutMessageYT = "@{0}, YouTube has no functionality to timeout you by a command, so be kind to shut up for 5 minutes, or wait until it done manually ^_^";
+	static string TimeoutMessageTW = "@{0}, timeout placeholder for Twitch";
+
+	static string NormalGameAnnouncement = "@{0} chose the normal type game.";
+	static string KnockoutGameAnnouncement = "@{0} chose the knockout type game.";
+
+	static string DuelAnnouncement = "@{0} calls for a duel in timeout roulette. Who is brave enought for a challenge? You've got {1} seconds to join. (!join)";
+	static string DuelStartMessage = "Duel betwenn {0} and {1} starts, good luck!";
+
+	static string MultiplayerAnnouncement = "@{0} calls for a game of timeout roulette. Any volunteers? Up to {1} people can play. You've got {2} seconds to join. (!join)";
+	static string AlreadyJoinedMessage = "@{0} you already joined.";
+	static string JoinedMessage = "@{0} has joined the game.";
+	static string MultiplayerStartMessage = "Game starts with {0} players, {1} was brave enough to participate, good luck!";
+	static string MultiplayerEndMessage = "Congratulations to participants. Luck was on your side, for this time!";
+
+	static string HandedGunMessage = "@{0} was handed a {1} chamber revolver with one bullet. Good luck!";
+	static string TurnMessage = "@{0}'s turn.";
+
+	static string BarrelSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-barrel.mp3";
+	static string ShotSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-shot.mp3";
+	static string MissSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-miss.mp3";
+
+	static string HesitationMessage = "@{0} hesitated but eventually pointed the gun at themselves and pulled the trigger.";
+	static string NoHesitationMessage = "@{0} pointed the gun at his head with no hesitation and pulled the trigger!";
+
+	static string ShotMessage = "Urghh, not even cleaning after themselves. @{0} shot themselves. Better luck next time!";
+	static string MissMessage = "Congratulation, @{0}. This time.";
+
+	public bool Reset()
+	{
+		CPH.LogDebug(String.Format("{0}Game was reseted", LogPrexif));
+
+		NumberOfChambers = 6;
+		MaxNumberOfPlayers = NumberOfChambers - 1;
+		Round = 0;
+		GameState = GameStates.None;
+		Players = new OrderedDictionary();
+		PlayerIndex = 0;
+		TimerStop();
+
+		return true;
+	}
+
+	public bool Execute()
+	{		
+		CPH.LogDebug(String.Format("{0}Execute", LogPrexif));
+
+		var user = args["user"].ToString();
+		string commandSource = args["commandSource"].ToString();
+
+		if (GameState != GameStates.None) {
+			GameIsRunning(commandSource, user);
+			return true;
+		}
+
+		Reset();
+		Start(commandSource, user);
+
+		return true;
+	}
+
+	void Start(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Starting", LogPrexif));
+
+		GameState = GameStates.Started;
+
+		Players.Add(user, commandSource);
+
+		var message = String.Format(StartMessage, user, StartTimeout);
+		SendMessage(commandSource, message);
+
+		message = String.Format(StartTimeoutMessage, user);
+		TimeoutTimer = TimerStart(commandSource, message, StartTimeout, OnStartTimeout);
+	}
+
+	public bool Singleplayer()
+	{
+		var user = args["user"].ToString();
+		if (!isOwner(user)) return false;
+
+		if ((GameState & GameStates.Started) == 0) return false;
+		
+		CPH.LogDebug(String.Format("{0}Singleplayer game started", LogPrexif));
+
+		GameState = GameStates.Singleplayer;
+
+		TimerStop();
+
+		CPH.PlaySound(BarrelSoundPath, 1.0f, true);
+
+		string commandSource = args["commandSource"].ToString();
+		var message = String.Format(HandedGunMessage, user, NumberOfChambers);
+		SendMessage(commandSource, message);
+
+		if(GameRound(commandSource, user)) Shot(commandSource, user);
+		else Miss(commandSource, user);
+		
+		Reset();
+
+		return true;
+	}
+
+	public bool ChooseType()
+	{
+		var user = args["user"].ToString();
+		if (!isOwner(user)) return false;
+
+		if ((GameState & GameStates.Started) == 0) return false;
+
+		CPH.LogDebug(String.Format("{0}Choosing game type", LogPrexif));
+
+		TimerStop();
+
+		GameState = GameStates.Multiplayer;
+		if(args["command"].ToString() == "!duel") GameState = GameState | GameStates.Duel;
+
+		string commandSource = args["commandSource"].ToString();
+		var message = String.Format(GameTypeMessage, user, TypeTimeout);
+		SendMessage(commandSource, message);
+		
+		message = String.Format(TypeTimeoutMessage, user);
+		TimeoutTimer = TimerStart(commandSource, message, TypeTimeout, OnTypeTimeout);
+
+		return true;
+	}
+
+	public bool StartNormal()
+	{
+		var user = args["user"].ToString();
+		if (!isOwner(user)) return false;
+
+		if ((GameState & GameStates.InProgress) != 0) return false;
+		if ((GameState & (GameStates.Normal | GameStates.Knockout)) != 0) return false;
+		if ((GameState & GameStates.Multiplayer) == 0) return false;
+
+		CPH.LogDebug(String.Format("{0}Normal game type was chosen", LogPrexif));
+		
+		GameState = GameState | GameStates.Normal;
+
+		TimerStop();
+
+		string commandSource = args["commandSource"].ToString();
+		var message = String.Format(NormalGameAnnouncement, user);
+		SendMessage(commandSource, message);
+
+		if ((GameState & GameStates.Duel) == 0) StartMultiplayer(commandSource, user);
+		else StartDuel(commandSource, user);
+
+		return true;
+	}
+
+	public bool StartKnockout()
+	{
+		var user = args["user"].ToString();
+		if (!isOwner(user)) return false;
+
+		if ((GameState & GameStates.InProgress) != 0) return false;
+		if ((GameState & (GameStates.Normal | GameStates.Knockout)) != 0) return false;
+		if ((GameState & GameStates.Multiplayer) == 0) return false;
+
+		CPH.LogDebug(String.Format("{0}Knockout game type was chosen", LogPrexif));
+
+		GameState = GameState | GameStates.Knockout;
+
+		TimerStop();
+
+		string commandSource = args["commandSource"].ToString();
+		var message = String.Format(KnockoutGameAnnouncement, user);
+		SendMessage(commandSource, message);
+
+		if ((GameState & GameStates.Duel) == 0) StartMultiplayer(commandSource, user);
+		else StartDuel(commandSource, user);
+
+		return true;
+	}
+	
+	void StartMultiplayer(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Multiplayer game announced", LogPrexif));
+
+		var message = String.Format(MultiplayerAnnouncement, user, MaxNumberOfPlayers, JoinTimeout);
+		SendMessage(commandSource, message);
+
+		message = String.Format(JoinTimeoutMessage, user);
+		TimeoutTimer = TimerStart(commandSource, message, JoinTimeout, OnJoinTimeout);
+	}
+
+	void StartDuel(string commandSource, string user)
+	{
+		MaxNumberOfPlayers = 2;
+		CPH.LogDebug(String.Format("{0}Duel announced", LogPrexif));
+		
+		var message = String.Format(DuelAnnouncement, user, JoinTimeout);
+		SendMessage(commandSource, message);
+
+		message = String.Format(JoinTimeoutMessage, user);
+		TimeoutTimer = TimerStart(commandSource, message, JoinTimeout, OnJoinTimeout);
+	}
+
+	public bool Join()
+	{
+		if ((GameState & GameStates.InProgress) != 0) return false;
+		if ((GameState & (GameStates.Normal | GameStates.Knockout)) == 0) return false;
+
+		var user = args["user"].ToString();
+		string commandSource = args["commandSource"].ToString();
+
+		CPH.LogDebug(String.Format("{0}{1} trying to join", LogPrexif, user));
+
+		if (Players.Contains(user))
+		{
+			AlreadyJoined(commandSource, user);
+			return false;
+		}
+
+		if (!(PlayerIndex < MaxNumberOfPlayers - 1))
+		{
+			var message = String.Format(GameIsFullMessage, user);
+			SendMessage(commandSource, message);
+
+			TimerStop();
+
+			Multiplayer();
+
+			return false;
+		}
+
+		Joining(commandSource, user);
+
+		if (Players.Count == MaxNumberOfPlayers) Multiplayer();
+
+		return true;
+	}
+
+	void Multiplayer()
+	{
+		if ((GameState & GameStates.InProgress) != 0) return;
+		GameState = GameState | GameStates.InProgress;
+
+		TimerStop();
+
+		string message;
+
+		ICollection pDictKeys = Players.Keys;
+		String[] pKeys = new String[Players.Count];
+		pDictKeys.CopyTo(pKeys, 0);
+
+		var commandSource = Players[0].ToString();
+
+		if ((GameState & GameStates.Duel) != 0) message = String.Format(DuelStartMessage, pKeys[0], pKeys[1]);
+		else message = String.Format(MultiplayerStartMessage, Players.Count, String.Join(", ", pKeys));
+		SendMessage(commandSource, message);
+
+		CPH.PlaySound(BarrelSoundPath, 1.0f, true);
+
+		message = String.Format(HandedGunMessage, pKeys[0], NumberOfChambers);
+		SendMessage(commandSource, message);
+
+		do
+		{
+			foreach(DictionaryEntry player in Players)
+			{
+				string user = player.Key.ToString();
+				string source = player.Value.ToString();
+
+				if(GameRound(source, user))
+				{
+					Shot(source, user);
+					Reset();
+					return;
+				}
+				Miss(source, user);
+				NumberOfChambers--;
+			}		
+		} while((GameState & GameStates.Knockout) != 0);
+
+		message = String.Format(MultiplayerEndMessage);
+		SendMessage(commandSource, message);
+		
+		Reset();
+	}
+
+	bool GameRound(string commandSource, string user)
+	{
+		Round++;
+
+		CPH.LogDebug(String.Format("{0}Round: {1}, player {2}", LogPrexif, Round, user));
+
+		if((GameState & GameStates.Multiplayer) != 0) {
+			var message = String.Format(TurnMessage, user);
+			SendMessage(commandSource, message);
+		}
+
+		if(RollHesitation()) Hesitate(commandSource, user);
+		else NoHesitate(commandSource, user);
+
+		return RollShot();
+	}
+
+	void GameIsRunning(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Game is already running", LogPrexif));
+
+		var message = String.Format(GameIsRunningMessage, user);
+		SendMessage(commandSource, message);
+	}
+
+	void AlreadyJoined(string source, string user)
+	{
+		CPH.LogDebug(String.Format("{0}{1} already joined", LogPrexif, user));
+
+		var message = String.Format(AlreadyJoinedMessage, user);
+		SendMessage(source, message);
+	}
+
+	void Joining(string source, string user)
+	{
+		PlayerIndex++;
+		Players.Add(user, source);
+		
+		CPH.LogDebug(String.Format("{0}{1} joined.", LogPrexif, user));
+
+		var message = String.Format(JoinedMessage, user);
+		SendMessage(source, message);
+	}
+
+	bool RollHesitation()
+	{
+		var rnd = CPH.Between(1000, 5000);
+
+		CPH.LogDebug(String.Format("{0}Hesitation roll {1}", LogPrexif, rnd));
+
+		CPH.Wait(rnd);
+		return rnd > 2000;
+	}
+
+	void NoHesitate(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Player {1} doesn't hesitate", LogPrexif, user));
+
+		var message = String.Format(NoHesitationMessage, user);
+		SendMessage(commandSource, message);
+
+		CPH.Wait(500);
+	}
+
+	void Hesitate(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Player {1} hesitates", LogPrexif, user));
+
+		var message = String.Format(HesitationMessage, user);
+		SendMessage(commandSource, message);
+
+		CPH.Wait(500);
+	}
+
+	bool RollShot()
+	{
+		CPH.LogDebug(String.Format("{0}Shot roll. Round {1}, chambers left {2}", LogPrexif, Round, NumberOfChambers));
+
+		return CPH.Between(0, NumberOfChambers - Round) == 0;
+	}
+
+	void Shot(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Player {1} got shot", LogPrexif, user));
+
+		CPH.PlaySound(ShotSoundPath, 1.0f, true);
+
+		var message = String.Format(ShotMessage, user);
+		SendMessage(commandSource, message);
+
+		Timeout(commandSource, user);
+	}
+
+	void Miss(string commandSource, string user)
+	{
+		CPH.LogDebug(String.Format("{0}Player {1} missed", LogPrexif, user));
+
+		CPH.PlaySound(MissSoundPath, 1.0f, true);
+
+		var message = String.Format(MissMessage, user);
+		SendMessage(commandSource, message);
+	}
+
+	void Timeout(string commandSource, string user)
+	{
+		string message;
+		if (commandSource == "twitch") message = String.Format(TimeoutMessageTW, user);
+		else message = String.Format(TimeoutMessageYT, user);
+		SendMessage(commandSource, message);
+	}
+
+	bool isOwner(string user)
+	{
+		ICollection pDictKeys = Players.Keys;
+		String[] pKeys = new String[Players.Count];
+		pDictKeys.CopyTo(pKeys, 0);
+		return pKeys[0] == user;		
+	}
+
+	void SendMessage(string source, string message)
+	{
+		if(source == "twitch") CPH.SendMessage(message);
+		else CPH.SendYouTubeMessage(message);
+	}
+
+	Timer TimerStart(string commandSource, string message, int duration, Func<string, string, ElapsedEventHandler> timeoutFunc)
+	{
+		CPH.LogDebug(String.Format("{0}{1} second timer started", LogPrexif, duration));
+		var timer = new System.Timers.Timer(duration * 1000);
+        timer.Elapsed += timeoutFunc(commandSource, message);
+		timer.AutoReset = false;
+        timer.Enabled = true;		
+
+		return timer;
+	}
+
+	void TimerStop()
+	{
+		CPH.LogDebug(String.Format("{0}Timer stopped", LogPrexif));
+		TimeoutTimer.Stop();
+		TimeoutTimer.Dispose();
+	}
+
+    ElapsedEventHandler OnStartTimeout(string commandSource, string message)
+    {
+		return (Object source, System.Timers.ElapsedEventArgs e) => {
+			CPH.LogDebug(String.Format("{0}Start timeout timer triggered", LogPrexif));
+			SendMessage(commandSource, message);
+			Reset();
+		};
+    }
+	
+    ElapsedEventHandler OnTypeTimeout(string commandSource, string message)
+    {
+		return (Object source, System.Timers.ElapsedEventArgs e) => {
+			CPH.LogDebug(String.Format("{0}Type timeout timer triggered", LogPrexif));
+			SendMessage(commandSource, message);
+			StartNormal();
+		};
+    }
+	
+    ElapsedEventHandler OnJoinTimeout(string commandSource, string message)
+    {
+		return (Object source, System.Timers.ElapsedEventArgs e) => {
+			CPH.LogDebug(String.Format("{0}Join timeout timer triggered", LogPrexif));
+			if (Players.Count > 2)
+			{
+				Multiplayer();
+				return;
+			}
+
+			SendMessage(commandSource, message);
+			Reset();
+		};
+    }
+}

@@ -1,7 +1,10 @@
 # TimeoutRoulette
 
 Small chat game of timeout roulette.
-It got singleplayer, duel and multiplayer games. Multiplayer versions got two mods: normal and knockout, where game ends when someone "eats the bullet". 
+It got singleplayer, duel and multiplayer games. Multiplayer versions got two mods: normal and knockout, where game ends when someone "eats the bullet".
+
+## Tutorial
+[![Tutorial](https://i.ytimg.com/an_webp/SP0VkEmmbpQ/mqdefault_6s.webp?du=3000&sqp=CLieyakG&rs=AOn4CLAx_2Druy8P3p1lJ4-h6Mayxba0hw)](https://www.youtube.com/watch?v=SP0VkEmmbpQ&)
 
 ## Import code for Streamer.Bot
 ```

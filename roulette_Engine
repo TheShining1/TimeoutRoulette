@@ -61,9 +61,9 @@ public class CPHInline
 	static string HandedGunMessage = "@{0} was handed a {1} chamber revolver with one bullet. Good luck!";
 	static string TurnMessage = "@{0}'s turn.";
 
-	static string BarrelSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-barrel.mp3";
-	static string ShotSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-shot.mp3";
-	static string MissSoundPath = "C:/Users/ShiningOne/Music/sfx/revolver-miss.mp3";
+	static string BarrelSoundPath = "<barrel_sound_path>";
+	static string ShotSoundPath = "<shot_sound_path>";
+	static string MissSoundPath = "<miss_sound_path>";
 
 	static string HesitationMessage = "@{0} hesitated but eventually pointed the gun at themselves and pulled the trigger.";
 	static string NoHesitationMessage = "@{0} pointed the gun at his head with no hesitation and pulled the trigger!";

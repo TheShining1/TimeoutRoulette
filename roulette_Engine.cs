@@ -13,7 +13,6 @@ public class CPHInline
     // Added to ensure that Channel Points can be correctly handled and potentially refunded in case of errors or cancellations.
     static string rewardId = "";
     static string redemptionId = "";
-
     static int MaxNumberOfPlayers;
     static int Round;
     [Flags]
@@ -77,32 +76,26 @@ public class CPHInline
         TimerStop();
         return true;
     }
+
     bool IsChannelPointReward()
     {
         // Adds logging to indicate when the check for a Channel Point Reward event is performed.
         CPH.LogInfo(String.Format("{0}Checking if event is a Channel Point Reward", LogPrefix));
-
         // Extends the check to consider if the rewardId has already been set, improving robustness for various event scenarios.
         return CPH.GetEventType() == Streamer.bot.Common.Events.EventType.TwitchRewardRedemption || !String.IsNullOrEmpty(rewardId);
     }
 
-
     void RefundPoints()
     {
-        // Logs the initiation of the refund process, providing visibility into the specific reward and redemption being refunded.
         CPH.LogInfo(String.Format("{0}Refunding points for rewardId: {1}, redemptionId: {2}", LogPrefix, rewardId, redemptionId));
         try
         {
             // Attempts to cancel the Twitch redemption using the provided rewardId and redemptionId.
             CPH.TwitchRedemptionCancel(rewardId, redemptionId);
-
-            // Logs a successful refund operation for tracking purposes.
             CPH.LogInfo(String.Format("{0}Refund successful", LogPrefix));
         }
         catch (Exception ex)
         {
-            // Catches any exceptions that occur during the refund process, ensuring the script doesn't crash.
-            // Logs the exception details to help with debugging any issues that arise.
             CPH.LogError(String.Format("{0}Refund failed. Exception: {1}", LogPrefix, ex.ToString()));
         }
     }
@@ -112,36 +105,29 @@ public class CPHInline
         CPH.LogInfo(String.Format("{0}Game is already running", LogPrefix));
         var message = String.Format(config.gameIsRunningMessage, user);
         SendMessage(commandSource, message);
-
         // Retrieves the reward and redemption IDs for the current attempt (usually the second user trying to start the game).
         string currentRewardId = "";
         string currentRedemptionId = "";
         if (CPH.TryGetArg<string>("rewardId", out currentRewardId) && CPH.TryGetArg<string>("redemptionId", out currentRedemptionId))
         {
-            // Logs the attempt to refund the points for the current user with their specific IDs.
             CPH.LogDebug(String.Format("{0}Attempting to refund points for user {1}. rewardId: {2}, redemptionId: {3}", LogPrefix, user, currentRewardId, currentRedemptionId));
             try
             {
-                // Attempts to refund the points using the current user's rewardId and redemptionId.
                 CPH.TwitchRedemptionCancel(currentRewardId, currentRedemptionId);
-
-                // Logs a successful refund for the current user.
                 CPH.LogDebug(String.Format("{0}Refund successful for user {1}. rewardId: {2}, redemptionId: {3}", LogPrefix, user, currentRewardId, currentRedemptionId));
             }
             catch (Exception ex)
             {
-                // Catches exceptions during the refund process, logs the issue for debugging.
                 CPH.LogError(String.Format("{0}Refund failed for user {1}. rewardId: {2}, redemptionId: {3}. Exception: {4}", LogPrefix, user, currentRewardId, currentRedemptionId, ex.ToString()));
             }
         }
         else
         {
-            // Logs a warning if the refund can't proceed due to missing or invalid IDs.
             CPH.LogWarn(String.Format("{0}No valid rewardId or redemptionId found for user {1}. Refund not possible.", LogPrefix, user));
         }
     }
 
-    public bool IsRuning()
+    public bool IsRunning()
     {
         var user = args["user"].ToString();
         string commandSource = args["userType"].ToString();
@@ -163,22 +149,41 @@ public class CPHInline
     {
         CPH.LogInfo(String.Format("{0}Starting game", LogPrefix));
         Reset();
-        string user = "";
-        CPH.TryGetArg<string>("user", out user);
-        string commandSource = "";
-        CPH.TryGetArg<string>("userType", out commandSource);
+
+        string user;
+        string commandSource;
+
+        if (!CPH.TryGetArg<string>("user", out user) || string.IsNullOrEmpty(user))
+        {
+            CPH.LogError($"{LogPrefix}Error: 'user' argument is null or empty.");
+            return false;
+        }
+
+        if (!CPH.TryGetArg<string>("userType", out commandSource) || string.IsNullOrEmpty(commandSource))
+        {
+            CPH.LogError($"{LogPrefix}Error: 'userType' argument is null or empty.");
+            return false;
+        }
+
         if (IsChannelPointReward())
         {
             CPH.TryGetArg<string>("rewardId", out rewardId);
             CPH.TryGetArg<string>("redemptionId", out redemptionId);
             CPH.LogInfo(String.Format("{0}Channel Point Reward detected, rewardId: {1}, redemptionId: {2}", LogPrefix, rewardId, redemptionId));
         }
+
         Start(commandSource, user);
         return true;
     }
 
     void Start(string commandSource, string user)
     {
+        if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(commandSource))
+        {
+            CPH.LogError($"{LogPrefix}Error: 'user' or 'commandSource' is null or empty in Start method.");
+            return;
+        }
+
         GameState = GameStates.Started;
         Players.Add(user, commandSource);
         var message = String.Format(config.startMessage, user, config.startTimeout);
@@ -429,16 +434,48 @@ public class CPHInline
     }
 
     // EmptyProfile : Adapted the "Shot" method to make it work with a game "leaderboard" : https://github.com/Mouchoir/TimeoutRouletteLeaderboard
-
     public void Shot(string commandSource, string user)
     {
-        int losses = CPH.GetUserVar<int>(user, "losses", true);
-        losses += 1;
-        CPH.SetUserVar(user, "losses", losses, true);
-        int timeoutMinutes = CPH.GetUserVar<int>(user, "timeoutMinutes", true);
-        timeoutMinutes += config.twitchTimeoutDuration;
-        CPH.SetUserVar(user, "timeoutMinutes", timeoutMinutes, true);
-        var leaderboard = CPH.GetGlobalVar<Dictionary<string, (int losses, int timeoutMinutes)>>("rouletteLeaderboard", true) ?? new Dictionary<string, (int losses, int timeoutMinutes)>();        if (leaderboard.ContainsKey(user))
+        int losses;
+        int timeoutMinutes;
+
+        if (commandSource == "twitch")
+        {
+            // Retrieve the user's current loss count using the Twitch method
+            losses = CPH.GetTwitchUserVar<int>(user, "losses", true);
+            // Retrieve the user's current total timeout minutes using the Twitch method
+            timeoutMinutes = CPH.GetTwitchUserVar<int>(user, "timeoutMinutes", true);
+
+            // Increment and update values for Twitch
+            losses += 1;
+            timeoutMinutes += config.twitchTimeoutDuration;
+            CPH.SetTwitchUserVar(user, "losses", losses, true);
+            CPH.SetTwitchUserVar(user, "timeoutMinutes", timeoutMinutes, true);
+        }
+        else if (commandSource == "youtube")
+        {
+            // Retrieve the user's current loss count using the YouTube method
+            losses = CPH.GetYouTubeUserVar<int>(user, "losses", true);
+            // Retrieve the user's current total timeout minutes using the YouTube method
+            timeoutMinutes = CPH.GetYouTubeUserVar<int>(user, "timeoutMinutes", true);
+
+            // Increment and update values for YouTube
+            losses += 1;
+            timeoutMinutes += config.twitchTimeoutDuration; // Assume the same timeout duration is used for YouTube
+            CPH.SetYouTubeUserVar(user, "losses", losses, true);
+            CPH.SetYouTubeUserVar(user, "timeoutMinutes", timeoutMinutes, true);
+        }
+        else
+        {
+            CPH.LogError($"{LogPrefix}Unsupported platform: {commandSource}");
+            return;
+        }
+
+        // Load the leaderboard from the persisted global variable
+        var leaderboard = CPH.GetGlobalVar<Dictionary<string, (int losses, int timeoutMinutes)>>("rouletteLeaderboard", true) ?? new Dictionary<string, (int losses, int timeoutMinutes)>();
+
+        // Update or add the user in the leaderboard with cumulative values
+        if (leaderboard.ContainsKey(user))
         {
             var currentData = leaderboard[user];
             leaderboard[user] = (currentData.losses + 1, currentData.timeoutMinutes + config.twitchTimeoutDuration);
@@ -447,12 +484,19 @@ public class CPHInline
         {
             leaderboard[user] = (losses, timeoutMinutes);
         }
+
+        // Save the updated leaderboard back to the persisted global variable
         CPH.SetGlobalVar("rouletteLeaderboard", leaderboard, true);
-        CPH.LogInfo($"TSO::Roulette::Player {user} - Cumulative Losses: {losses}, Cumulative Timeout: {timeoutMinutes} minutes");
-        // EmptyProfile : Play the shot sound
+        CPH.LogInfo($"{LogPrefix}Player {user} - Cumulative Losses: {losses}, Cumulative Timeout: {timeoutMinutes} minutes");
+
+        // Play the shot sound
         CPH.PlaySound(config.shotSoundPath, 1.0f, true);
+
+        // Send a message to chat
         var message = String.Format(config.shotMessage, user);
         SendMessage(commandSource, message);
+
+        // Apply the timeout to the user
         Timeout(commandSource, user);
     }
 
@@ -477,9 +521,15 @@ public class CPHInline
             // Removed config.twitchUseBotAccount param to allow the game to be handled by the bot account while the kick aciton is made by the streamer account, allowing to kick moderators accounts
             CPH.TwitchTimeoutUser(user, duration, config.twitchTimeoutReason);
         }
-        else
+        else if (commandSource == "youtube")
         {
             message = String.Format(config.timeoutMessageYT, user);
+            // Apply YouTube-specific timeout logic here if available
+        }
+        else
+        {
+            CPH.LogError($"{LogPrefix}Unsupported platform: {commandSource}");
+            return;
         }
         SendMessage(commandSource, message);
     }
@@ -512,8 +562,10 @@ public class CPHInline
     {
         if (source == "twitch")
             CPH.SendMessage(message, config.twitchUseBotAccount);
-        else
+        else if (source == "youtube")
             CPH.SendYouTubeMessage(message);
+        else
+            CPH.LogError($"{LogPrefix}Unsupported platform: {source}");
     }
 
     Timer TimerStart(string commandSource, string message, int duration, Func<string, string, ElapsedEventHandler> timeoutFunc)
@@ -565,8 +617,7 @@ public class CPHInline
     {
         return (Object source, System.Timers.ElapsedEventArgs e) =>
         {
-            // Ensure multiplayer starts if at least one other player joins
-            if (Players.Count >= 2)
+            if (Players.Count >= 2) // Replace 2 with the minimum required number of players if necessary
             {
                 Multiplayer();
                 return;

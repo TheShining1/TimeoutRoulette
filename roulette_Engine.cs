@@ -510,7 +510,8 @@ public class CPHInline
     void Timeout(string commandSource, string user)
     {
         string message;
-        int duration = config.twitchTimeoutDuration * 60;
+        int duration = config.twitchTimeoutDuration * 60; // Assuming the same duration is used for YouTube
+
         if (commandSource == "twitch")
         {
             if (IsModerator(user))
@@ -518,19 +519,21 @@ public class CPHInline
                 RemodeTimer = RemodeTimeout(user, duration + 10);
             }
             message = String.Format(config.timeoutMessageTW, user);
-            // Removed config.twitchUseBotAccount param to allow the game to be handled by the bot account while the kick aciton is made by the streamer account, allowing to kick moderators accounts
+            // Timeout the user on Twitch
             CPH.TwitchTimeoutUser(user, duration, config.twitchTimeoutReason);
         }
         else if (commandSource == "youtube")
         {
             message = String.Format(config.timeoutMessageYT, user);
-            // Apply YouTube-specific timeout logic here if available
+            // Timeout the user on YouTube using the new 0.2.4 method - I haven't been able to test it
+            CPH.YouTubeTimeoutUserByName(user, duration);
         }
         else
         {
             CPH.LogError($"{LogPrefix}Unsupported platform: {commandSource}");
             return;
         }
+
         SendMessage(commandSource, message);
     }
 

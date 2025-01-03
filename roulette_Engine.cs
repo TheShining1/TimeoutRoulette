@@ -6,10 +6,13 @@ using System.Timers;
 
 public class CPHInline
 {
-	static string LogPrefix = "TSO::Roulette::";
+	static string LogPrefix = "TSO::Roulette::";	
 
 	static RouletteConfig config = new RouletteConfig();
 
+	static string rewardId = "";
+	static string redemptionId = "";
+	
 	static int MaxNumberOfPlayers;
 	static int Round;
 
@@ -31,6 +34,7 @@ public class CPHInline
 	static int PlayerIndex;
 
 	static Timer TimeoutTimer = new Timer();
+	static Timer RemodeTimer;
 
 	public bool SetConfig()
 	{
@@ -50,7 +54,7 @@ public class CPHInline
 			}
 
 			prop.SetValue(config, Convert.ChangeType(propValue, propType));
-			CPH.LogDebug(String.Format("{0}Config argument {1} is set to value {2} of type {3}", LogPrefix, prop.Name, propValue, propType));
+			CPH.LogVerbose(String.Format("{0}Config argument {1} is set to value {2} of type {3}", LogPrefix, prop.Name, propValue, propType));
 		}
 		
 		if (config.twitchUseBotAccount)
@@ -69,6 +73,8 @@ public class CPHInline
 	public bool Reset()
 	{
 		CPH.LogDebug(String.Format("{0}Game was reseted", LogPrefix));
+		rewardId = "";
+		redemptionId = "";
 		MaxNumberOfPlayers = config.getMaxNumberOfPlayers();
 		Round = 0;
 		GameState = GameStates.None;
@@ -81,14 +87,14 @@ public class CPHInline
 
 	bool IsChannelPointReward()
 	{
-		return CPH.GetEventType() == Streamer.bot.Common.Events.EventType.TwitchRewardRedemption;
+		CPH.LogWarn(String.Format("{0}CPH.GetEventType(): {1}", LogPrefix, CPH.GetEventType()));
+		CPH.LogWarn(String.Format("{0}rewardId: {1}", LogPrefix, rewardId));
+		CPH.LogWarn(String.Format("{0}String.IsNullOrEmpty(rewardId): {1}", LogPrefix, String.IsNullOrEmpty(rewardId)));
+		return CPH.GetEventType() == Streamer.bot.Common.Events.EventType.TwitchRewardRedemption || !String.IsNullOrEmpty(rewardId);
 	}
 
-	void RefundPoints()
+	void RefundPoints(string rewardId, string redemptionId)
 	{
-		var rewardId = args["rewardId"].ToString();
-		var redemptionId = args["redemptionId"].ToString();
-
 		CPH.TwitchRedemptionCancel(rewardId, redemptionId);
 	}
 
@@ -97,7 +103,18 @@ public class CPHInline
 		CPH.LogDebug(String.Format("{0}Game is already running", LogPrefix));
 		var message = String.Format(config.gameIsRunningMessage, user);
 		SendMessage(commandSource, message);
-		if (IsChannelPointReward()) RefundPoints();
+		if (IsChannelPointReward()) 
+		{
+			string rewardId, redemptionId;
+			if (CPH.TryGetArg<string>("rewardId", out rewardId)
+				&& CPH.TryGetArg<string>("redemptionId", out redemptionId))
+				{
+					CPH.LogWarn(String.Format("{0}rewardId: {1}", LogPrefix, rewardId));
+					CPH.LogWarn(String.Format("{0}redemptionId: {1}", LogPrefix, redemptionId));
+
+					RefundPoints(rewardId, redemptionId);
+				}
+		}
 	}
 
 	public bool IsRuning()
@@ -123,10 +140,33 @@ public class CPHInline
 	public bool Run()
 	{
 		CPH.LogDebug(String.Format("{0}Execute", LogPrefix));
-		var user = args["user"].ToString();
-		string commandSource = args["userType"].ToString();
+		Reset();	
 
-		Reset();
+		string commandSource = "";
+		CPH.TryGetArg<string>("userType", out commandSource);
+
+		string user;
+		switch(commandSource)
+		{
+			case "twitch":				
+				CPH.TryGetArg<string>("user", out user);
+				break;
+			case "youtube":
+				CPH.TryGetArg<string>("userName", out user);
+				break;
+			default:
+				CPH.TryGetArg<string>("user", out user);
+				break;
+		}		
+		
+		if(IsChannelPointReward())
+		{			
+			CPH.TryGetArg<string>("rewardId", out rewardId);
+			CPH.TryGetArg<string>("redemptionId", out redemptionId);
+			CPH.LogWarn(String.Format("{0}rewardId: {1}", LogPrefix, rewardId));
+			CPH.LogWarn(String.Format("{0}redemptionId: {1}", LogPrefix, redemptionId));
+		}
+
 		Start(commandSource, user);
 
 		return true;
@@ -138,6 +178,13 @@ public class CPHInline
 		GameState = GameStates.Started;
 
 		Players.Add(user, commandSource);
+
+		if(config.singlePlayerMode) {
+			CPH.LogDebug(String.Format("{0}Running singplayer only mode", LogPrefix));
+			Singleplayer();
+			return;
+		}
+
 		var message = String.Format(config.startMessage, user, config.startTimeout);
 		SendMessage(commandSource, message);
 
@@ -147,7 +194,23 @@ public class CPHInline
 
 	public bool Singleplayer()
 	{
-		var user = args["user"].ToString();
+		string commandSource;
+		CPH.TryGetArg<string>("userType", out commandSource);
+
+		string user;
+		switch(commandSource)
+		{
+			case "twitch":				
+				CPH.TryGetArg<string>("user", out user);
+				break;
+			case "youtube":
+				CPH.TryGetArg<string>("userName", out user);
+				break;
+			default:
+				CPH.TryGetArg<string>("user", out user);
+				break;
+		}
+
 		if (!isOwner(user))
 			return false;
 		if ((GameState & GameStates.Started) == 0)
@@ -159,8 +222,7 @@ public class CPHInline
 		TimerStop();
 
 		CPH.PlaySound(config.barrelSoundPath, 1.0f, true);
-
-		string commandSource = args["userType"].ToString();
+		
 		var message = String.Format(config.handedGunMessage, user, config.numberOfChambers);
 		SendMessage(commandSource, message);
 
@@ -176,7 +238,9 @@ public class CPHInline
 
 	public bool ChooseType()
 	{
-		var user = args["user"].ToString();
+		string user = "";
+		CPH.TryGetArg<string>("user", out user);
+		
 		if (!isOwner(user))
 			return false;
 		if ((GameState & GameStates.Started) == 0)
@@ -186,9 +250,15 @@ public class CPHInline
 		TimerStop();
 		GameState = GameStates.Multiplayer;
 
-		if (args["command"].ToString() == "!duel") GameState = GameState | GameStates.Duel;
 
-		string commandSource = args["userType"].ToString();
+		string command = "";
+		CPH.TryGetArg<string>("command", out command);
+		
+		if (command == "!duel") GameState = GameState | GameStates.Duel;
+
+		string commandSource = "";
+		CPH.TryGetArg<string>("userType", out commandSource);
+		
 		var message = String.Format(config.gameTypeMessage, user, config.typeTimeout);
 		SendMessage(commandSource, message);
 
@@ -200,7 +270,9 @@ public class CPHInline
 
 	public bool StartNormal()
 	{
-		var user = args["user"].ToString();
+		string user = "";
+		if(!CPH.TryGetArg<string>("user", out user)) return false;
+		
 		if (!isOwner(user)) return false;
 
 		if ((GameState & GameStates.InProgress) != 0) return false;
@@ -225,7 +297,9 @@ public class CPHInline
 
 	public bool StartKnockout()
 	{
-		var user = args["user"].ToString();
+		string user = "";
+		if(!CPH.TryGetArg<string>("user", out user)) return false;
+		
 		if (!isOwner(user)) return false;
 
 		if ((GameState & GameStates.InProgress) != 0) return false;
@@ -275,8 +349,23 @@ public class CPHInline
 		if ((GameState & GameStates.InProgress) != 0) return false;
 		if ((GameState & (GameStates.Normal | GameStates.Knockout)) == 0) return false;
 
-		var user = args["user"].ToString();
-		string commandSource = args["userType"].ToString();
+		string commandSource;
+		CPH.TryGetArg<string>("userType", out commandSource);
+
+		string user;
+		switch(commandSource)
+		{
+			case "twitch":				
+				CPH.TryGetArg<string>("user", out user);
+				break;
+			case "youtube":
+				CPH.TryGetArg<string>("userName", out user);
+				break;
+			default:
+				CPH.TryGetArg<string>("user", out user);
+				break;
+		}
+
 		CPH.LogDebug(String.Format("{0}{1} trying to join", LogPrefix, user));
 		if (Players.Contains(user))
 		{
@@ -450,18 +539,41 @@ public class CPHInline
 
 	void Timeout(string commandSource, string user)
 	{
-		string message;
+		string message = String.Format(config.timeoutMessageOther, user);
+		int duration = config.timeoutDuration * 60;
+		
 		if (commandSource == "twitch")
 		{
-			message = String.Format(config.timeoutMessageTW, user);
-			CPH.TwitchTimeoutUser(user, config.twitchTimeoutDuration * 60, config.twitchTimeoutReason, config.twitchUseBotAccount);
+			message = String.Format(config.timeoutMessage, user);
+
+			if(IsModerator(user))
+			{
+				CPH.TwitchTimeoutUser(user, duration, config.timeoutReason, false);
+				RemodeTimer = RemodeTimeout(user, duration + 10);
+			} else {
+				CPH.TwitchTimeoutUser(user, duration, config.timeoutReason, config.twitchUseBotAccount);
+			}
 		}
-		else
+		else if (commandSource == "youtube")
 		{
-			message = String.Format(config.timeoutMessageYT, user);
+				string broadcastId;
+				CPH.TryGetArg("broadcast.id", out broadcastId);
+				CPH.LogDebug($"broadcastId: {broadcastId}");
+				CPH.YouTubeTimeoutUserByName(user, duration, broadcastId);
 		}
 
 		SendMessage(commandSource, message);
+	}
+	
+	Timer RemodeTimeout(string user, int duration)
+	{		
+		CPH.LogDebug(String.Format("{0}{1} second timer started", LogPrefix, duration));
+		var timer = new System.Timers.Timer(duration * 1000);
+		timer.Elapsed += OnRemodTimeout(user);
+		timer.AutoReset = false;
+		timer.Enabled = true;
+		
+		return timer;
 	}
 
 	bool isOwner(string user)
@@ -470,6 +582,13 @@ public class CPHInline
 		String[] pKeys = new String[Players.Count];
 		pDictKeys.CopyTo(pKeys, 0);
 		return pKeys[0] == user;
+	}
+	
+	bool IsModerator(string user)
+	{
+		TwitchUserInfo userInfo = CPH.TwitchGetUserInfoByLogin(user);
+		CPH.LogDebug($"userInfo.IsModerator: {userInfo.IsModerator}");
+		return userInfo.IsModerator;
 	}
 
 	void SendMessage(string source, string message)
@@ -497,13 +616,24 @@ public class CPHInline
 		TimeoutTimer.Dispose();
 	}
 
+	ElapsedEventHandler OnRemodTimeout(string user)
+	{
+		return (Object source, System.Timers.ElapsedEventArgs e) =>
+		{
+			CPH.LogDebug(String.Format("{0}Remod timer for {1} triggered", LogPrefix, user));
+			CPH.TwitchAddModerator(user);
+			RemodeTimer.Stop();
+			RemodeTimer.Dispose();
+		};
+	}
+
 	ElapsedEventHandler OnStartTimeout(string commandSource, string message)
 	{
 		return (Object source, System.Timers.ElapsedEventArgs e) =>
 		{
 			CPH.LogDebug(String.Format("{0}Start timeout timer triggered", LogPrefix));
 			SendMessage(commandSource, message);
-			if (IsChannelPointReward()) RefundPoints();
+			if (IsChannelPointReward()) RefundPoints(rewardId, redemptionId);
 			Reset();
 		};
 	}
@@ -529,7 +659,7 @@ public class CPHInline
 				return;
 			}
 
-			if (IsChannelPointReward()) RefundPoints();
+			if (IsChannelPointReward()) RefundPoints(rewardId, redemptionId);
 			SendMessage(commandSource, message);
 			Reset();
 		};
@@ -541,13 +671,14 @@ class RouletteConfig()
 	public string barrelSoundPath { get; set; }
 	public string shotSoundPath { get; set; }
 	public string missSoundPath { get; set; }
+	public bool singlePlayerMode {get; set; } = false;
 	public int numberOfChambers { get; set; }
 	public int startTimeout { get; set; }
 	public int typeTimeout { get; set; }
 	public int joinTimeout { get; set; }
-	public int twitchTimeoutDuration { get; set; }
-	public string twitchTimeoutReason { get; set; }
+	public int timeoutDuration { get; set; }
 	public bool twitchUseBotAccount { get; set; }
+	public string timeoutReason { get; set; }
 
 	public int getMaxNumberOfPlayers()
 	{
@@ -576,6 +707,6 @@ class RouletteConfig()
 	public string noHesitationMessage { get; set; }
 	public string shotMessage { get; set; }
 	public string missMessage { get; set; }
-	public string timeoutMessageYT { get; set; }
-	public string timeoutMessageTW { get; set; }
+	public string timeoutMessage { get; set; }
+	public string timeoutMessageOther { get; set; }
 }
